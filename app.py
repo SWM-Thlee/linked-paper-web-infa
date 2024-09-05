@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import boto3
 import aws_cdk as cdk
-from linked_paper_web_infra.linked_paper_web_infra_stack import LinkedPaperWebInfraStack
+from linked_paper_web_infra.linked_paper_web_infra_stack import (
+    LinkedPaperWebInfraStack,
+    BackendInfraStack,
+)
 
 
 def get_aws_account_id():
@@ -30,4 +33,9 @@ LinkedPaperWebInfraStack(
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
 )
 
+BackendInfraStack(
+    app,
+    "BackendInfraStack",
+    env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
+)
 app.synth()
