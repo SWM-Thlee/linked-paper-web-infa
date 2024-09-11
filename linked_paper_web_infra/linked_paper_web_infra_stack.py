@@ -1,18 +1,14 @@
-from aws_cdk import (
-    aws_ec2 as ec2,
-    aws_ecs as ecs,
-    aws_ecs_patterns as ecs_patterns,
-    aws_route53 as route53,
-    aws_route53_targets as targets,
-    aws_certificatemanager as acm,
-    aws_iam as iam,
-    Stack,
-    Aws,
-)
+from aws_cdk import Aws, CfnOutput, Duration, Fn, Stack
+from aws_cdk import aws_applicationautoscaling as applicationautoscaling
+from aws_cdk import aws_certificatemanager as acm
+from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_ecs as ecs
+from aws_cdk import aws_ecs_patterns as ecs_patterns
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
-from aws_cdk import CfnOutput
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_route53 as route53
+from aws_cdk import aws_route53_targets as targets
 from constructs import Construct
-from aws_cdk import Fn
 
 
 class LinkedPaperWebInfraStack(Stack):
@@ -79,10 +75,11 @@ class LinkedPaperWebInfraStack(Stack):
             max_capacity=2,  # 최대 컨테이너 개수
         )
 
-        # 스케일링 정책 추가 (예: CPU 사용률에 따라 스케일링)
         scalable_target.scale_on_cpu_utilization(
             "CpuScaling",
-            target_utilization_percent=70,  # 목표 CPU 사용률
+            target_utilization_percent=100,  # 목표 CPU 사용률 90%
+            scale_in_cooldown=Duration.seconds(30),  # 스케일 인 쿨다운 (30초)
+            scale_out_cooldown=Duration.seconds(10),  # 스케일 아웃 쿨다운 (10초)
         )
 
         # Route53 호스팅 영역 가져오기
@@ -236,18 +233,53 @@ class BackendInfraStack(Stack):
 
         api_scalable_target.scale_on_cpu_utilization(
             "CpuScaling",
-            target_utilization_percent=70,
+            target_utilization_percent=100,  # 목표 CPU 사용률 90%
+            scale_in_cooldown=Duration.seconds(30),  # 스케일 인 쿨다운 (30초)
+            scale_out_cooldown=Duration.seconds(10),  # 스케일 아웃 쿨다운 (10초)
         )
 
         # Auto Scaling 설정 (Search Service)
         search_scalable_target = search_service.service.auto_scale_task_count(
             min_capacity=1,
-            max_capacity=2,
+            max_capacity=3,
         )
 
         search_scalable_target.scale_on_cpu_utilization(
             "CpuScaling",
-            target_utilization_percent=70,
+            target_utilization_percent=100,  # 목표 CPU 사용률 90%
+            scale_in_cooldown=Duration.seconds(30),  # 스케일 인 쿨다운 (30초)
+            scale_out_cooldown=Duration.seconds(10),  # 스케일 아웃 쿨다운 (10초)
+        )
+        # Route53 호스팅 영역 가져오기
+        hosted_zone = route53.HostedZone.from_lookup(
+            self, "LinkedPaperHostedZone", domain_name="linked-paper.com"
+        )
+
+        # ACM 인증서 생성
+        api_certificate = acm.Certificate(
+            self,
+            "ApiServiceCertificate",
+            domain_name="api.linkedpaper.com",
+            validation=acm.CertificateValidation.from_dns(hosted_zone),
+        )
+
+        # HTTPS 리스너에 인증서 추가
+        api_service.load_balancer.add_listener(
+            "ApiHttpsListener",
+            port=443,
+            certificates=[api_certificate],
+            default_target_groups=[api_service.target_group],
+        )
+
+        # Route53 A 레코드 생성 (api.linkedpaper.com을 API 서버의 Load Balancer DNS로 매핑)
+        route53.ARecord(
+            self,
+            "ApiServiceRecord",
+            zone=hosted_zone,
+            record_name="api",  # This creates api.linkedpaper.com
+            target=route53.RecordTarget.from_alias(
+                targets.LoadBalancerTarget(api_service.load_balancer)
+            ),
         )
 
         # Output: API 서버의 Load Balancer DNS
