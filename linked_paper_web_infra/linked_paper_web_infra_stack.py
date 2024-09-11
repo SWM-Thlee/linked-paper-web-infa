@@ -259,7 +259,7 @@ class BackendInfraStack(Stack):
         api_certificate = acm.Certificate(
             self,
             "ApiServiceCertificate",
-            domain_name="api.linkedpaper.com",
+            domain_name="api.linked-paper.com",
             validation=acm.CertificateValidation.from_dns(hosted_zone),
         )
 
