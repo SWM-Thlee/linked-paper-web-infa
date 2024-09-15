@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-import boto3
 import aws_cdk as cdk
+import boto3
+
 from linked_paper_web_infra.linked_paper_web_infra_stack import (
-    LinkedPaperWebInfraStack,
     BackendInfraStack,
+    LinkedPaperWebInfraStack,
 )
+from traffic_monitor.nat_gateway import NatGatewayMonitoringStack
 
 
 def get_aws_account_id():
@@ -38,4 +40,11 @@ BackendInfraStack(
     "BackendInfraStack",
     env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
 )
+
+NatGatewayMonitoringStack(
+    app,
+    "NatGatewayMonitoringStack",
+    env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
+)
+
 app.synth()
