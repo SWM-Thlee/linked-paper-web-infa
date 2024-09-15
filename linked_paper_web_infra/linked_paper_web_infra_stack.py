@@ -177,6 +177,30 @@ class BackendInfraStack(Stack):
             port_mappings=[ecs.PortMapping(container_port=8080)],
         )
 
+        # ECR 접근 권한 추가
+        api_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage",
+                    "ecr:GetAuthorizationToken",
+                ],
+                resources=["*"],
+            )
+        )
+
+        # Add EC2 read-only access for VPC and network resources to the execution role
+        api_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeSecurityGroups",
+                ],
+                resources=["*"],
+            )
+        )
+
         # API 서버 Fargate 서비스 생성 (Private Subnet에 배포)
         api_service = ecs_patterns.ApplicationLoadBalancedFargateService(
             self,
@@ -212,6 +236,44 @@ class BackendInfraStack(Stack):
             memory_limit_mib=4096,
             logging=ecs.LogDrivers.aws_logs(stream_prefix="SearchService"),
             port_mappings=[ecs.PortMapping(container_port=8000)],
+        )
+
+        # ECR 접근 권한 추가
+        search_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage",
+                    "ecr:GetAuthorizationToken",
+                ],
+                resources=["*"],
+            )
+        )
+        # Add OpenSearch access permissions to the execution role
+        search_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "es:DescribeDomain",
+                    "es:DescribeElasticsearchDomain",
+                    "es:ESHttpGet",
+                    "es:ESHttpPost",
+                ],
+                resources=[
+                    "arn:aws:es:ap-northeast-2:058264275251:domain/opensearch-document-store"
+                ],  # Update the ARN to your domain ARN
+            )
+        )
+
+        # Add EC2 read-only access for VPC and network resources to the execution role
+        search_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeSecurityGroups",
+                ],
+                resources=["*"],
+            )
         )
 
         # Search Service Fargate 서비스 생성 (Private Subnet에 배포)
