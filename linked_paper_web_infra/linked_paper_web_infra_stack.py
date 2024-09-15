@@ -19,6 +19,17 @@ class LinkedPaperWebInfraStack(Stack):
         # VPC 생성
         linked_paper_vpc = ec2.Vpc(self, "LinkedPaperVpc", max_azs=2, nat_gateways=1)
 
+        # NAT 게이트웨이 ID 가져오기
+        nat_gateway_id = linked_paper_vpc.public_subnets[0].node.default_child.ref
+
+        # NAT Gateway ID를 출력하여 다른 스택에서 사용할 수 있도록 함
+        CfnOutput(
+            self,
+            "NatGatewayId",
+            value=nat_gateway_id,
+            description="NAT Gateway ID for the VPC",
+        )
+
         # Fargate 클러스터 생성
         linked_paper_cluster = ecs.Cluster(
             self, "LinkedPaperCluster", vpc=linked_paper_vpc
@@ -150,68 +161,6 @@ class BackendInfraStack(Stack):
             connection=ec2.Port.tcp(8000),  # Search Service의 포트 8000
         )
 
-        # Fargate 클러스터 생성 (API 서버용)
-        api_cluster = ecs.Cluster(self, "ApiServiceCluster", vpc=linked_paper_vpc)
-
-        # ECS Task 정의 생성 (API 서버)
-        api_task_definition = ecs.FargateTaskDefinition(
-            self,
-            "ApiServiceTaskDef",
-            memory_limit_mib=2048,  # Task memory limit
-            cpu=1024,  # Task CPU limit
-        )
-
-        # ECS Task 정의에 API 서버 컨테이너 추가
-        api_task_definition.add_container(
-            "ApiServiceContainer",
-            image=ecs.ContainerImage.from_registry(
-                f"{Aws.ACCOUNT_ID}.dkr.ecr.{Aws.REGION}.amazonaws.com/api_service_image:latest"
-            ),
-            environment={
-                "NODE_ENV": "production",
-                "SEARCH_SERVICE_URL": "http://search-service:8000",  # Search Service URL (서비스 디스커버리 사용 가능)
-            },
-            cpu=1024,
-            memory_limit_mib=2048,
-            logging=ecs.LogDrivers.aws_logs(stream_prefix="ApiService"),
-            port_mappings=[ecs.PortMapping(container_port=8080)],
-        )
-
-        # ECR 접근 권한 추가
-        api_task_definition.add_to_execution_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "ecr:GetDownloadUrlForLayer",
-                    "ecr:BatchGetImage",
-                    "ecr:GetAuthorizationToken",
-                ],
-                resources=["*"],
-            )
-        )
-
-        # Add EC2 read-only access for VPC and network resources to the execution role
-        api_task_definition.add_to_execution_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "ec2:DescribeInstances",
-                    "ec2:DescribeNetworkInterfaces",
-                    "ec2:DescribeSecurityGroups",
-                ],
-                resources=["*"],
-            )
-        )
-
-        # API 서버 Fargate 서비스 생성 (Private Subnet에 배포)
-        api_service = ecs_patterns.ApplicationLoadBalancedFargateService(
-            self,
-            "ApiServiceFargateService",
-            cluster=api_cluster,
-            task_definition=api_task_definition,
-            public_load_balancer=True,  # Public ALB (외부에서 API 서버로 접근 가능)
-            task_subnets=private_subnets[0],
-            security_groups=[api_security_group],
-        )
-
         # Search Service Fargate 클러스터 생성 (Private Subnet에 배포)
         search_cluster = ecs.Cluster(self, "SearchServiceCluster", vpc=linked_paper_vpc)
 
@@ -249,23 +198,15 @@ class BackendInfraStack(Stack):
                 resources=["*"],
             )
         )
-        # Add OpenSearch access permissions to the execution role
-        search_task_definition.add_to_execution_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "es:DescribeDomain",
-                    "es:DescribeElasticsearchDomain",
-                    "es:ESHttpGet",
-                    "es:ESHttpPost",
-                ],
-                resources=[
-                    "arn:aws:es:ap-northeast-2:058264275251:domain/opensearch-document-store"
-                ],  # Update the ARN to your domain ARN
+        # Add OpenSearch access permissions to the task role (runntime permissions)
+        search_task_definition.task_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "AmazonOpenSearchServiceFullAccess"
             )
         )
 
         # Add EC2 read-only access for VPC and network resources to the execution role
-        search_task_definition.add_to_execution_role_policy(
+        search_task_definition.add_to_task_role_policy(
             iam.PolicyStatement(
                 actions=[
                     "ec2:DescribeInstances",
@@ -285,6 +226,73 @@ class BackendInfraStack(Stack):
             public_load_balancer=False,  # Private ALB
             task_subnets=private_subnets[0],
             security_groups=[search_service_security_group],
+        )
+
+        # Output: API 서버의 Load Balancer DNS
+        search_service_load_balancer_dns = (
+            search_service.load_balancer.load_balancer_dns_name
+        )
+
+        # Fargate 클러스터 생성 (API 서버용)
+        api_cluster = ecs.Cluster(self, "ApiServiceCluster", vpc=linked_paper_vpc)
+
+        # ECS Task 정의 생성 (API 서버)
+        api_task_definition = ecs.FargateTaskDefinition(
+            self,
+            "ApiServiceTaskDef",
+            memory_limit_mib=2048,  # Task memory limit
+            cpu=1024,  # Task CPU limit
+        )
+
+        # ECS Task 정의에 API 서버 컨테이너 추가
+        api_task_definition.add_container(
+            "ApiServiceContainer",
+            image=ecs.ContainerImage.from_registry(
+                f"{Aws.ACCOUNT_ID}.dkr.ecr.{Aws.REGION}.amazonaws.com/api_service_image:latest"
+            ),
+            environment={
+                "NODE_ENV": "production",
+                "SEARCH_SERVICE_URL": f"http://{search_service_load_balancer_dns}:8000",  # Search Service URL
+            },
+            cpu=1024,
+            memory_limit_mib=2048,
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="ApiService"),
+            port_mappings=[ecs.PortMapping(container_port=8080)],
+        )
+
+        # ECR 접근 권한 추가
+        api_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage",
+                    "ecr:GetAuthorizationToken",
+                ],
+                resources=["*"],
+            )
+        )
+
+        # Add EC2 read-only access for VPC and network resources to the execution role
+        api_task_definition.add_to_task_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeSecurityGroups",
+                ],
+                resources=["*"],
+            )
+        )
+
+        # API 서버 Fargate 서비스 생성 (Private Subnet에 배포)
+        api_service = ecs_patterns.ApplicationLoadBalancedFargateService(
+            self,
+            "ApiServiceFargateService",
+            cluster=api_cluster,
+            task_definition=api_task_definition,
+            public_load_balancer=True,  # Public ALB (외부에서 API 서버로 접근 가능)
+            task_subnets=private_subnets[0],
+            security_groups=[api_security_group],
         )
 
         # Auto Scaling 설정 (API 서버)
