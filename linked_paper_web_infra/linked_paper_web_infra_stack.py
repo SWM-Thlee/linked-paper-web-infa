@@ -28,6 +28,7 @@ class LinkedPaperWebInfraStack(Stack):
             "NatGatewayId",
             value=nat_gateway_id,
             description="NAT Gateway ID for the VPC",
+            export_name="NatGatewayId",
         )
 
         # Fargate 클러스터 생성
@@ -158,11 +159,30 @@ class BackendInfraStack(Stack):
         # API 서버가 Search Service의 포트에 접근할 수 있도록 보안 그룹 규칙 추가
         search_service_security_group.add_ingress_rule(
             peer=api_security_group,
-            connection=ec2.Port.tcp(8000),  # Search Service의 포트 8000
+            connection=ec2.Port.tcp(80),  # Search Service의 LB에 대한 포트 80 열기
         )
 
         # Search Service Fargate 클러스터 생성 (Private Subnet에 배포)
         search_cluster = ecs.Cluster(self, "SearchServiceCluster", vpc=linked_paper_vpc)
+
+        # Search Service ECS Task Role 생성
+        search_service_task_role = iam.Role(
+            self,
+            "SearchServiceTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+        )
+
+        # OpenSearch 접근 권한 추가
+        search_service_task_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "AmazonOpenSearchServiceFullAccess"
+            )
+        )
+
+        # EC2 네트워크 리소스 읽기 권한 추가
+        search_service_task_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess")
+        )
 
         # ECS Task 정의 생성 (Search Service)
         search_task_definition = ecs.FargateTaskDefinition(
@@ -170,6 +190,7 @@ class BackendInfraStack(Stack):
             "SearchServiceTaskDef",
             memory_limit_mib=4096,  # Task memory limit
             cpu=2048,  # Task CPU limit
+            task_role=search_service_task_role,
         )
 
         # Search Service의 ECS Task 정의에 컨테이너 추가
@@ -194,24 +215,6 @@ class BackendInfraStack(Stack):
                     "ecr:GetDownloadUrlForLayer",
                     "ecr:BatchGetImage",
                     "ecr:GetAuthorizationToken",
-                ],
-                resources=["*"],
-            )
-        )
-        # Add OpenSearch access permissions to the task role (runntime permissions)
-        search_task_definition.task_role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name(
-                "AmazonOpenSearchServiceFullAccess"
-            )
-        )
-
-        # Add EC2 read-only access for VPC and network resources to the execution role
-        search_task_definition.add_to_task_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "ec2:DescribeInstances",
-                    "ec2:DescribeNetworkInterfaces",
-                    "ec2:DescribeSecurityGroups",
                 ],
                 resources=["*"],
             )
@@ -252,7 +255,7 @@ class BackendInfraStack(Stack):
             ),
             environment={
                 "NODE_ENV": "production",
-                "SEARCH_SERVICE_URL": f"http://{search_service_load_balancer_dns}:8000",  # Search Service URL
+                "SEARCH_SERVICE_URL": f"http://{search_service_load_balancer_dns}",  # Search Service URL
             },
             cpu=1024,
             memory_limit_mib=2048,
@@ -357,4 +360,11 @@ class BackendInfraStack(Stack):
             self,
             "ApiServiceLoadBalancerDNS",
             value=api_service.load_balancer.load_balancer_dns_name,
+        )
+
+        CfnOutput(
+            self,
+            "SearchServiceTaskRoleArn",
+            value=search_service_task_role.role_arn,
+            export_name="SearchServiceTaskRoleArn",
         )
