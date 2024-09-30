@@ -1,5 +1,6 @@
 from aws_cdk import Aws, CfnOutput, Duration, Fn, Stack
 from aws_cdk import aws_applicationautoscaling as applicationautoscaling
+from aws_cdk import aws_autoscaling as autoscaling
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecs as ecs
@@ -184,16 +185,80 @@ class BackendInfraStack(Stack):
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess")
         )
 
-        # ECS Task 정의 생성 (Search Service)
-        search_task_definition = ecs.FargateTaskDefinition(
+        # EC2 인스턴스에 할당할 IAM 역할 생성
+        ec2_instance_role = iam.Role(
+            self,
+            "EC2InstanceRole",
+            assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AmazonECSTaskExecutionRolePolicy"
+                ),  # 수정된 정책
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonSSMManagedInstanceCore"
+                ),  # EC2 인스턴스 관리용 (SSM 접근)
+            ],
+        )
+
+        user_data = ec2.UserData.for_linux()
+
+        user_data.add_commands(
+            "echo ECS_ENABLE_GPU_SUPPORT=true >> /etc/ecs/ecs.config"
+        )
+
+        # Auto Scaling 그룹 생성 (g4dn.xlarge GPU 지원 인스턴스)
+        gpu_asg = autoscaling.AutoScalingGroup(
+            self,
+            "GPUAutoScalingGroup",
+            vpc=linked_paper_vpc,
+            vpc_subnets=private_subnets[0],
+            instance_type=ec2.InstanceType("g4dn.xlarge"),  # g4dn.xlarge 인스턴스 유형
+            machine_image=ecs.EcsOptimizedImage.amazon_linux2(
+                ecs.AmiHardwareType.GPU
+            ),  # GPU용 ECS 최적화 AMI
+            desired_capacity=1,  # 기본 EC2 인스턴스 개수
+            min_capacity=1,  # 최소 EC2 인스턴스 개수
+            max_capacity=2,  # 최대 EC2 인스턴스 개수
+            security_group=search_service_security_group,  # 보안 그룹 재사용
+            role=ec2_instance_role,  # EC2 인스턴스에 필요한 IAM 역할
+            user_data=user_data,  # GPU 지원 활성화
+        )
+
+        # ASG Capacity Provider 생성
+        asg_capacity_provider = ecs.AsgCapacityProvider(
+            self,
+            "AsgCapacityProvider",
+            auto_scaling_group=gpu_asg,
+            enable_managed_termination_protection=True,  # 옵션: 인스턴스 보호 활성화
+            enable_managed_scaling=True,  # ECS에서 자동으로 ASG 확장/축소 관리
+        )
+
+        # ECS 클러스터에 Capacity Provider 추가
+        search_cluster.add_asg_capacity_provider(
+            asg_capacity_provider,
+            can_containers_access_instance_role=True,  # 컨테이너가 EC2 인스턴스의 역할을 사용할 수 있게 함
+        )
+
+        # ECS Task 정의 생성 (EC2 기반)
+        search_task_definition = ecs.Ec2TaskDefinition(
             self,
             "SearchServiceTaskDef",
-            memory_limit_mib=4096,  # Task memory limit
-            cpu=2048,  # Task CPU limit
+            network_mode=ecs.NetworkMode.AWS_VPC,
             task_role=search_service_task_role,
         )
 
-        # Search Service의 ECS Task 정의에 컨테이너 추가
+        search_task_definition.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage",
+                    "ecr:GetAuthorizationToken",
+                ],
+                resources=["*"],  # 모든 ECR 리소스에 대한 권한을 부여
+            )
+        )
+
+        # GPU 자원을 사용하는 컨테이너 추가
         search_task_definition.add_container(
             "SearchServiceContainer",
             image=ecs.ContainerImage.from_registry(
@@ -202,38 +267,58 @@ class BackendInfraStack(Stack):
             environment={
                 "NODE_ENV": "production",
             },
-            cpu=2048,
-            memory_limit_mib=4096,
+            memory_limit_mib=1024 * 8,  # 8 GB 메모리
+            cpu=1024 * 4,  # 4 vCPU
+            gpu_count=1,  # GPU 자원 요청
             logging=ecs.LogDrivers.aws_logs(stream_prefix="SearchService"),
             port_mappings=[ecs.PortMapping(container_port=8000)],
         )
 
-        # ECR 접근 권한 추가
-        search_task_definition.add_to_execution_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "ecr:GetDownloadUrlForLayer",
-                    "ecr:BatchGetImage",
-                    "ecr:GetAuthorizationToken",
-                ],
-                resources=["*"],
-            )
-        )
-
-        # Search Service Fargate 서비스 생성 (Private Subnet에 배포)
-        search_service = ecs_patterns.ApplicationLoadBalancedFargateService(
+        # ECS 서비스 생성 (EC2 기반)
+        search_service = ecs.Ec2Service(
             self,
-            "SearchServiceFargateService",
+            "SearchServiceEC2Service",
             cluster=search_cluster,
             task_definition=search_task_definition,
-            public_load_balancer=False,  # Private ALB
-            task_subnets=private_subnets[0],
+            desired_count=1,  # 원하는 태스크 개수
             security_groups=[search_service_security_group],
+            vpc_subnets=private_subnets[0],
+            placement_constraints=[
+                ecs.PlacementConstraint.member_of(
+                    "attribute:ecs.instance-type == g4dn.xlarge"
+                )  # GPU 인스턴스에서만 배치
+            ],
+        )
+
+        # Application Load Balancer 생성 (HTTP 트래픽을 EC2 서비스로 전달)
+        search_service_load_balancer = elbv2.ApplicationLoadBalancer(
+            self,
+            "SearchServiceLB",
+            vpc=linked_paper_vpc,
+            internet_facing=True,  # 외부에서 접근 가능
+            security_group=search_service_security_group,  # 동일한 보안 그룹을 사용
+        )
+
+        # 로드 밸런서의 리스너 생성 (HTTP 포트 80)
+        listener = search_service_load_balancer.add_listener(
+            "Listener",
+            port=80,  # 외부에서 포트 80으로 접근 가능
+            open=True,  # 모든 트래픽 허용
+        )
+
+        listener.add_targets(
+            "SearchServiceTarget",
+            port=8000,  # 타겟의 컨테이너 포트
+            targets=[search_service],
+            health_check=elbv2.HealthCheck(
+                path="/",  # 헬스 체크 경로 (웹 서버의 루트 경로로 확인)
+                interval=Duration.seconds(30),
+            ),
         )
 
         # Output: API 서버의 Load Balancer DNS
         search_service_load_balancer_dns = (
-            search_service.load_balancer.load_balancer_dns_name
+            search_service_load_balancer.load_balancer_dns_name
         )
 
         # Fargate 클러스터 생성 (API 서버용)
@@ -311,18 +396,6 @@ class BackendInfraStack(Stack):
             scale_out_cooldown=Duration.seconds(10),  # 스케일 아웃 쿨다운 (10초)
         )
 
-        # Auto Scaling 설정 (Search Service)
-        search_scalable_target = search_service.service.auto_scale_task_count(
-            min_capacity=1,
-            max_capacity=3,
-        )
-
-        search_scalable_target.scale_on_cpu_utilization(
-            "CpuScaling",
-            target_utilization_percent=100,  # 목표 CPU 사용률 90%
-            scale_in_cooldown=Duration.seconds(30),  # 스케일 인 쿨다운 (30초)
-            scale_out_cooldown=Duration.seconds(10),  # 스케일 아웃 쿨다운 (10초)
-        )
         # Route53 호스팅 영역 가져오기
         hosted_zone = route53.HostedZone.from_lookup(
             self, "LinkedPaperHostedZone", domain_name="linked-paper.com"
