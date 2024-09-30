@@ -295,24 +295,32 @@ class BackendInfraStack(Stack):
             self,
             "SearchServiceLB",
             vpc=linked_paper_vpc,
-            internet_facing=True,  # 외부에서 접근 가능
+            vpc_subnets=ec2.SubnetSelection(
+                subnets=linked_paper_vpc.private_subnets  # 프라이빗 서브넷으로 로드 밸런서를 배치
+            ),
+            internet_facing=False,
             security_group=search_service_security_group,  # 동일한 보안 그룹을 사용
         )
 
-        # 로드 밸런서의 리스너 생성 (HTTP 포트 80)
-        listener = search_service_load_balancer.add_listener(
-            "Listener",
-            port=80,  # 외부에서 포트 80으로 접근 가능
-            open=True,  # 모든 트래픽 허용
-        )
-
-        listener.add_targets(
-            "SearchServiceTarget",
-            port=8000,  # 타겟의 컨테이너 포트
-            targets=[search_service],
-            health_check=elbv2.HealthCheck(
-                path="/",  # 헬스 체크 경로 (웹 서버의 루트 경로로 확인)
-                interval=Duration.seconds(30),
+        listener = elbv2.ApplicationListener(
+            self,
+            "SearchApiListener",
+            load_balancer=search_service_load_balancer,
+            port=80,
+            default_action=elbv2.ListenerAction.forward(
+                target_groups=[
+                    elbv2.ApplicationTargetGroup(
+                        self,
+                        "SearchServiceTargetGroup",
+                        vpc=linked_paper_vpc,
+                        port=8000,
+                        targets=[search_service],
+                        health_check=elbv2.HealthCheck(
+                            path="/",
+                            interval=Duration.seconds(30),
+                        ),
+                    )
+                ]
             ),
         )
 
