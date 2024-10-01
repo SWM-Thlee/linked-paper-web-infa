@@ -2,10 +2,8 @@
 import aws_cdk as cdk
 import boto3
 
-from linked_paper_web_infra.linked_paper_web_infra_stack import (
-    BackendInfraStack,
-    LinkedPaperWebInfraStack,
-)
+from linked_paper_web_infra.backend_stack import BackendInfraStack
+from linked_paper_web_infra.front_stack import LinkedPaperWebInfraStack
 from traffic_monitor.nat_gateway import NatGatewayMonitoringStack
 
 
