@@ -113,7 +113,6 @@ class BackendInfraStack(Stack):
             self,
             "AsgCapacityProvider",
             auto_scaling_group=gpu_asg,
-            enable_managed_termination_protection=True,  # 옵션: 인스턴스 보호 활성화
             enable_managed_scaling=True,  # ECS에서 자동으로 ASG 확장/축소 관리
             enable_managed_draining=True,  # ECS에서 자동으로 인스턴스 드레인 관리
         )
