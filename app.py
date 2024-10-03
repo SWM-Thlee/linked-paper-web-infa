@@ -2,6 +2,7 @@
 import aws_cdk as cdk
 import boto3
 
+from deploy_monitor.ecs_deploy_monitor import EcsDeploymentNotifierStack
 from linked_paper_web_infra.backend_stack import BackendInfraStack
 from linked_paper_web_infra.front_stack import LinkedPaperWebInfraStack
 from traffic_monitor.nat_gateway import NatGatewayMonitoringStack
@@ -42,6 +43,12 @@ BackendInfraStack(
 NatGatewayMonitoringStack(
     app,
     "NatGatewayMonitoringStack",
+    env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
+)
+
+EcsDeploymentNotifierStack(
+    app,
+    "EcsDeploymentNotifierStack",
     env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
 )
 
