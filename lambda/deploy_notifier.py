@@ -29,11 +29,10 @@ def lambda_handler(event, context):
 
     # 메시지 포맷팅
     message = (
-        f"*ECS 배포 이벤트 발생*\n"
-        f"• *이벤트 유형*: {event_type}\n"
-        f"• *이벤트 이름*: {event_name}\n"
-        f"• *클러스터 이름*: {cluster_name}\n"
-        f"• *배포 ID*: {deployment_id}\n"
+        f"*ECS 배포* `{event_type}`\n"
+        f"• *이벤트*: `{event_name}`\n"
+        f"• *클러스터*: `{cluster_name}`\n"
+        f"• *배포 ID*: `{deployment_id}`\n"
         f"• *사유*: {reason}\n"
         f"• *업데이트 시각*: {updated_at}"
     )

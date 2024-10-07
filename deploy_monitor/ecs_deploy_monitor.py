@@ -21,8 +21,8 @@ class EcsDeploymentNotifierStack(Stack):
             self,
             "SlackNotifierLambda",
             runtime=lambda_.Runtime.PYTHON_3_9,
-            handler="slack_notifier.lambda_handler",  # Lambda 핸들러 파일명과 함수명
-            code=lambda_.Code.from_asset("lambda"),  # Lambda 함수 코드 경로
+            handler="deploy_notifier.lambda_handler",
+            code=lambda_.Code.from_asset("lambda"),
             environment={
                 "SECRET_NAME": "GlueSlackWebhookURL",  # Secrets Manager의 Webhook URL 키
                 "SNS_TOPIC_ARN": sns_topic.topic_arn,
@@ -45,7 +45,7 @@ class EcsDeploymentNotifierStack(Stack):
                 source=["aws.ecs"],
                 detail_type=[
                     "ECS Deployment State Change"
-                ],  # EventBridge에서 실제로 발생하는 ECS 이벤트 타입
+                ],  # EventBridge에 정의된 ECS 이벤트 타입
             ),
         )
 
