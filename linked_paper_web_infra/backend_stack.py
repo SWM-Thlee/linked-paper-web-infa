@@ -1,4 +1,6 @@
-from aws_cdk import Aws, CfnOutput, Duration, Stack
+from aws_cdk import Aws, CfnOutput, Duration, Fn, Stack
+from aws_cdk import aws_apigatewayv2 as apigateway
+from aws_cdk import aws_apigatewayv2_integrations as apigateway_integrations
 from aws_cdk import aws_autoscaling as autoscaling
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_ec2 as ec2
@@ -7,7 +9,8 @@ from aws_cdk import aws_ecs_patterns as ecs_patterns
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_route53 as route53
-from aws_cdk import aws_route53_targets as targets
+from aws_cdk import aws_route53_targets as route53_targets
+from aws_cdk import aws_wafv2 as wafv2
 from constructs import Construct
 
 
@@ -301,23 +304,64 @@ class BackendInfraStack(Stack):
             validation=acm.CertificateValidation.from_dns(hosted_zone),
         )
 
-        # HTTPS 리스너에 인증서 추가
-        api_service.load_balancer.add_listener(
-            "ApiHttpsListener",
-            port=443,
-            certificates=[api_certificate],
-            default_target_groups=[api_service.target_group],
+        # Create an API Gateway HTTP API
+        api_gateway = apigateway.HttpApi(self, "ApiGateway")
+
+        # Create a custom domain name for the API Gateway
+        domain_name = apigateway.DomainName(
+            self,
+            "ApiDomainName",
+            domain_name="api.linked-paper.com",
+            certificate=api_certificate,
         )
 
-        # Route53 A 레코드 생성 (api.linkedpaper.com을 API 서버의 Load Balancer DNS로 매핑)
+        # Map the custom domain name to the API Gateway stage
+        apigateway.ApiMapping(
+            self,
+            "ApiGatewayDomainMapping",
+            domain_name=domain_name,
+            api=api_gateway,
+            stage=api_gateway.default_stage,
+        )
+
+        # Integration with the Load Balancer (Direct DNS approach)
+        lb_dns = api_service.load_balancer.load_balancer_dns_name
+
+        lb_integration = apigateway_integrations.HttpUrlIntegration(
+            "ApiGatewayLoadBalancerIntegration",
+            url=f"http://{lb_dns}/{{proxy}}",  # Correctly forward the path
+        )
+
+        # Add routes for "/search" and "/correlations" paths using a proxy pattern
+        api_gateway.add_routes(
+            path="/{proxy+}",  # Catch all paths and forward them to the Load Balancer
+            methods=[apigateway.HttpMethod.ANY],  # Support all HTTP methods
+            integration=lb_integration,
+        )
+
+        # Route53 A Record for api.linked-paper.com
         route53.ARecord(
             self,
             "ApiServiceRecord",
             zone=hosted_zone,
-            record_name="api",  # This creates api.linkedpaper.com
+            record_name="api",  # This creates api.linked-paper.com
             target=route53.RecordTarget.from_alias(
-                targets.LoadBalancerTarget(api_service.load_balancer)
+                route53_targets.ApiGatewayv2DomainProperties(
+                    domain_name.regional_domain_name,
+                    domain_name.regional_hosted_zone_id,
+                )
             ),
+        )
+
+        # Import the WAF Web ACL ARN from the WAF stack
+        waf_acl_arn = Fn.import_value("WafAclArn")
+
+        # WAF Web ACL association with API Gateway
+        wafv2.CfnWebACLAssociation(
+            self,
+            "ApiGatewayWafAssociation",
+            resource_arn=api_service.load_balancer.load_balancer_arn,
+            web_acl_arn=waf_acl_arn,  # Use the imported ARN here
         )
 
         # Output: API 서버의 Load Balancer DNS

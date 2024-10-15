@@ -5,6 +5,7 @@ import boto3
 from deploy_monitor.ecs_deploy_monitor import EcsDeploymentNotifierStack
 from linked_paper_web_infra.backend_stack import BackendInfraStack
 from linked_paper_web_infra.front_stack import LinkedPaperWebInfraStack
+from security.waf_stack import WafStack
 from traffic_monitor.nat_gateway import NatGatewayMonitoringStack
 
 
@@ -34,6 +35,13 @@ LinkedPaperWebInfraStack(
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
 )
 
+WafStack(
+    app,
+    "WafStack",
+    env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
+)
+
+
 BackendInfraStack(
     app,
     "BackendInfraStack",
@@ -51,5 +59,6 @@ EcsDeploymentNotifierStack(
     "EcsDeploymentNotifierStack",
     env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
 )
+
 
 app.synth()
