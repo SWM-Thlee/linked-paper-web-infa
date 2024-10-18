@@ -1,11 +1,14 @@
-from aws_cdk import Aws, CfnOutput, Duration, Stack
+from aws_cdk import Aws, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_certificatemanager as acm
+from aws_cdk import aws_cloudfront as cloudfront
+from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_ecs_patterns as ecs_patterns
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_route53 as route53
 from aws_cdk import aws_route53_targets as targets
+from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
 
@@ -121,4 +124,51 @@ class LinkedPaperWebInfraStack(Stack):
             target=route53.RecordTarget.from_alias(
                 targets.LoadBalancerTarget(next_was_fargate_service.load_balancer)
             ),
+        )
+
+        # S3 정적 파일 버킷 생성
+        static_files_bucket = s3.Bucket(
+            self,
+            "LinkedPaperStaticFilesBucket",
+            removal_policy=RemovalPolicy.RETAIN,  # 삭제 방지
+            auto_delete_objects=False,
+        )
+
+        # us-east-1에서 발급된 SSL 인증서 사용
+        cloudfront_certificate = acm.Certificate.from_certificate_arn(
+            self,
+            "CloudFrontCertificate",
+            certificate_arn="arn:aws:acm:us-east-1:058264275251:certificate/ab1b9c1f-8976-4ed7-8979-a0866a0d28b4",
+        )
+
+        # CloudFront 배포 생성 (S3를 오리진으로 사용)
+        cloudfront_distribution = cloudfront.Distribution(
+            self,
+            "LinkedPaperDistribution",
+            default_behavior={
+                "origin": origins.S3Origin(static_files_bucket),
+                "allowed_methods": cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                "viewer_protocol_policy": cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+            },
+            domain_names=["cdn.linked-paper.com"],  # CDN 도메인
+            certificate=cloudfront_certificate,  # us-east-1에서 발급된 인증서 사용
+        )
+
+        # Route53에 A 레코드 생성 (cdn.linked-paper.com을 CloudFront로 연결)
+        route53.ARecord(
+            self,
+            "CdnAliasRecord",
+            zone=hosted_zone,
+            target=route53.RecordTarget.from_alias(
+                targets.CloudFrontTarget(cloudfront_distribution)
+            ),
+            record_name="cdn",  # cdn.linked-paper.com으로 사용
+        )
+
+        # CloudFront URL 출력
+        CfnOutput(
+            self,
+            "CloudFrontUrl",
+            value=f"https://{cloudfront_distribution.distribution_domain_name}",
+            description="URL of the CloudFront distribution",
         )
