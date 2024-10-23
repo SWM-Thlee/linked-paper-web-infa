@@ -4,7 +4,8 @@
 This project automates the deployment of Linked Paper's web infrastructure on AWS using Infrastructure as Code (IaC) with AWS CDK. The architecture includes both frontend and backend services, as well as security and monitoring components.
 
 ## Architecture
-(그림)
+![image](https://github.com/user-attachments/assets/52c0c28a-8383-4364-9cbf-d04d5b76557b)
+
 
 ## Stacks
 1. **LinkedPaperWebInfraStack**
