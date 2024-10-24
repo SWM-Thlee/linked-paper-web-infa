@@ -3,6 +3,7 @@ import aws_cdk as cdk
 import boto3
 
 from deploy_monitor.ecs_deploy_monitor import EcsDeploymentNotifierStack
+from etl_monitor.batch_monitor import BatchFailureAlertStack
 from linked_paper_web_infra.backend_stack import BackendInfraStack
 from linked_paper_web_infra.front_stack import LinkedPaperWebInfraStack
 from security.waf_stack import WafStack
@@ -60,5 +61,10 @@ EcsDeploymentNotifierStack(
     env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
 )
 
+BatchFailureAlertStack(
+    app,
+    "BatchFailureAlertStack",
+    env=cdk.Environment(account=get_aws_account_id(), region=get_default_region()),
+)
 
 app.synth()
