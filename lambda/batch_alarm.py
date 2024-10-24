@@ -42,13 +42,10 @@ def lambda_handler(event, context):
             f"• *종료 시각*: {stopped_at}"
         )
     else:
-        message = (
-            f"*AWS Batch 작업 상태 변경* `{job_name}`\n"
-            f"• *작업 ID*: `{job_id}`\n"
-            f"• *상태*: `{status}`\n"
-            f"• *시작 시각*: {created_at}\n"
-            f"• *종료 시각*: {stopped_at}"
-        )
+        return {
+            "statusCode": 200,
+            "body": json.dumps("Slack notification sent successfully!"),
+        }
 
     # Slack 메시지 전송
     slack_message = {"text": message}
