@@ -20,18 +20,6 @@ class LinkedPaperWebInfraStack(Stack):
         # VPC 생성
         linked_paper_vpc = ec2.Vpc(self, "LinkedPaperVpc", max_azs=2, nat_gateways=1)
 
-        # NAT 게이트웨이 ID 가져오기
-        nat_gateway_id = linked_paper_vpc.public_subnets[0].node.default_child.ref
-
-        # NAT Gateway ID를 출력하여 다른 스택에서 사용할 수 있도록 함
-        CfnOutput(
-            self,
-            "NatGatewayId",
-            value=nat_gateway_id,
-            description="NAT Gateway ID for the VPC",
-            export_name="NatGatewayId",
-        )
-
         # Fargate 클러스터 생성
         linked_paper_cluster = ecs.Cluster(
             self, "LinkedPaperCluster", vpc=linked_paper_vpc
