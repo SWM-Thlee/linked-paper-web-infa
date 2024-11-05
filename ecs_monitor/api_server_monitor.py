@@ -1,7 +1,6 @@
 from aws_cdk import Duration, Fn, Stack
 from aws_cdk import aws_cloudwatch as cloudwatch
-from aws_cdk import aws_events as events
-from aws_cdk import aws_events_targets as targets
+from aws_cdk import aws_cloudwatch_actions as actions
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from constructs import Construct
@@ -55,46 +54,25 @@ class ApiServerHealthMonitor(Stack):
             statistic="Average",
         )
 
-        # CloudWatch 알람 생성
+        # CloudWatch 알람 생성 및 Lambda 액션 추가
         cpu_alarm = cloudwatch.Alarm(
             self,
             "CpuAlarm",
             metric=cpu_metric,
-            threshold=0.8,
+            threshold=0.8,  # % 사용량 기준
             evaluation_periods=1,
             alarm_description="Alarm when ECS CPU utilization exceeds 80%",
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
         )
+        cpu_alarm.add_alarm_action(actions.LambdaAction(slack_notifier_lambda))
 
         memory_alarm = cloudwatch.Alarm(
             self,
             "MemoryAlarm",
             metric=memory_metric,
-            threshold=80,
+            threshold=80,  # % 사용량 기준
             evaluation_periods=1,
             alarm_description="Alarm when ECS memory utilization exceeds 80%",
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
         )
-
-        # EventBridge 규칙에 클러스터와 서비스 이름을 포함하여 Lambda로 전달
-        alarm_event_rule = events.Rule(
-            self,
-            "AlarmEventRule",
-            event_pattern=events.EventPattern(
-                source=["aws.cloudwatch"],
-                detail_type=["CloudWatch Alarm State Change"],
-                detail={
-                    "state": ["ALARM"],
-                    "alarmName": [cpu_alarm.alarm_name, memory_alarm.alarm_name],
-                },
-            ),
-        )
-        # Lambda 함수 연결 시 'function' 키워드 사용
-        alarm_event_rule.add_target(
-            targets.LambdaFunction(
-                handler=slack_notifier_lambda,
-                event=events.RuleTargetInput.from_object(
-                    {"cluster_name": cluster_name, "service_name": service_name}
-                ),
-            )
-        )
+        memory_alarm.add_alarm_action(actions.LambdaAction(slack_notifier_lambda))
