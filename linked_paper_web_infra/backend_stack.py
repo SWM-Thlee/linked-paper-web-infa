@@ -377,3 +377,17 @@ class BackendInfraStack(Stack):
             value=search_service_task_role.role_arn,
             export_name="SearchServiceTaskRoleArn",
         )
+
+        CfnOutput(
+            self,
+            "ApiServiceName",
+            value=api_service.service.service_name,
+            export_name="ApiServiceName",
+        )
+
+        CfnOutput(
+            self,
+            "ApiClusterName",
+            value=api_cluster.cluster_name,
+            export_name="ApiClusterName",
+        )
